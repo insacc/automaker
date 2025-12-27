@@ -10,6 +10,11 @@ export const COLUMNS: { id: ColumnId; title: string; colorClass: string }[] = [
     colorClass: 'bg-[var(--status-in-progress)]',
   },
   {
+    id: 'ai_review',
+    title: 'AI Review',
+    colorClass: 'bg-[var(--status-review)]',
+  },
+  {
     id: 'waiting_approval',
     title: 'Waiting Approval',
     colorClass: 'bg-[var(--status-waiting)]',

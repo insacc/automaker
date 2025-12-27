@@ -263,7 +263,7 @@ export interface Feature extends Omit<
   category: string;
   description: string;
   steps: string[]; // Required in UI (not optional)
-  status: 'backlog' | 'in_progress' | 'waiting_approval' | 'verified' | 'completed';
+  status: 'backlog' | 'in_progress' | 'ai_review' | 'waiting_approval' | 'verified' | 'completed';
   images?: FeatureImage[]; // UI-specific base64 images
   imagePaths?: FeatureImagePath[]; // Stricter type than base (no string | union)
   textFilePaths?: FeatureTextFilePath[]; // Text file attachments for context

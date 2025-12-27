@@ -105,3 +105,17 @@ export type {
   BacklogPlanRequest,
   BacklogPlanApplyResult,
 } from './backlog-plan.js';
+
+// QA Review types
+export type {
+  ReviewSeverity,
+  ReviewCategory,
+  ReviewIssue,
+  ReviewResult,
+  QAReviewStatus,
+  QAReviewState,
+  QAReviewConfig,
+  QAReviewEventType,
+  QAReviewEvent,
+} from './qa-review.js';
+export { DEFAULT_QA_REVIEW_CONFIG } from './qa-review.js';

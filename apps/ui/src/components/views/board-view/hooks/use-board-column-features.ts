@@ -26,6 +26,7 @@ export function useBoardColumnFeatures({
     const map: Record<ColumnId, Feature[]> = {
       backlog: [],
       in_progress: [],
+      ai_review: [],
       waiting_approval: [],
       verified: [],
       completed: [], // Completed features are shown in the archive modal, not as a column

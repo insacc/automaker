@@ -282,6 +282,37 @@ export function CardActions({
           ) : null}
         </>
       )}
+      {!isCurrentAutoTask && feature.status === 'ai_review' && (
+        <>
+          {/* AI Review in progress indicator */}
+          <Button
+            variant="secondary"
+            size="sm"
+            className="flex-1 h-7 text-[11px] min-w-0 animate-pulse"
+            disabled
+            data-testid={`ai-review-status-${feature.id}`}
+          >
+            <Eye className="w-3 h-3 mr-1 shrink-0" />
+            <span className="truncate">AI Reviewing...</span>
+          </Button>
+          {/* Logs button */}
+          {onViewOutput && (
+            <Button
+              variant="secondary"
+              size="sm"
+              className="h-7 text-[11px] px-2"
+              onClick={(e) => {
+                e.stopPropagation();
+                onViewOutput();
+              }}
+              onPointerDown={(e) => e.stopPropagation()}
+              data-testid={`view-output-ai-review-${feature.id}`}
+            >
+              <FileText className="w-3 h-3" />
+            </Button>
+          )}
+        </>
+      )}
       {!isCurrentAutoTask && feature.status === 'backlog' && (
         <>
           <Button

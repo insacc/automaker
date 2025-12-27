@@ -59,6 +59,7 @@ export function useBoardDragDrop({
       // - waiting_approval items can always be dragged (to allow manual verification via drag)
       // - verified items can always be dragged (to allow moving back to waiting_approval)
       // - in_progress items can be dragged (but not if they're currently running)
+      // - ai_review items cannot be dragged while review is in progress
       // - Non-skipTests (TDD) items that are in progress cannot be dragged if they are running
       if (draggedFeature.status === 'in_progress') {
         // Only allow dragging in_progress if it's not currently running
@@ -66,6 +67,15 @@ export function useBoardDragDrop({
           console.log('[Board] Cannot drag feature - currently running');
           return;
         }
+      }
+
+      // Prevent dragging ai_review items (AI is actively reviewing)
+      if (draggedFeature.status === 'ai_review') {
+        console.log('[Board] Cannot drag feature - AI review in progress');
+        toast.info('Cannot move feature', {
+          description: 'AI review is in progress',
+        });
+        return;
       }
 
       let targetStatus: ColumnId | null = null;

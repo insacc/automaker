@@ -21,5 +21,14 @@ export {
   getAvailableEnhancementModes,
 } from './enhancement.js';
 
+// QA Review prompts
+export {
+  QA_REVIEWER_SYSTEM_PROMPT,
+  QA_FIXER_SYSTEM_PROMPT,
+  buildReviewerPrompt,
+  buildFixerPrompt,
+  formatReviewComment,
+} from './qa-review.js';
+
 // Re-export types from @automaker/types
 export type { EnhancementMode, EnhancementExample } from '@automaker/types';
