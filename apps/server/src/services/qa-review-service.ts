@@ -308,7 +308,7 @@ export class QAReviewService {
       cwd: worktreePath,
       systemPrompt: QA_REVIEWER_SYSTEM_PROMPT,
       maxTurns: 15,
-      allowedTools: ['Read', 'Glob', 'Grep', 'Bash'], // Read-only + tests/build
+      allowedTools: ['Read', 'Glob', 'Grep'], // Read-only tools for static code review
       abortController,
     };
 
@@ -350,7 +350,7 @@ export class QAReviewService {
       cwd: worktreePath,
       systemPrompt: QA_FIXER_SYSTEM_PROMPT,
       maxTurns: 50, // More turns for fixing
-      allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'],
+      allowedTools: ['Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash'], // Bash for git commits only
       abortController,
     };
 

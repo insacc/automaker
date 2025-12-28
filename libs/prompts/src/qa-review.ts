@@ -67,8 +67,6 @@ You MUST respond with valid JSON in one of these formats:
 {
   "status": "approved",
   "summary": "Brief description of what was implemented and verified",
-  "testsRun": true,
-  "testsPassed": true,
   "criteriaChecked": [
     "Criterion 1 - PASS",
     "Criterion 2 - PASS"
@@ -82,8 +80,6 @@ You MUST respond with valid JSON in one of these formats:
 {
   "status": "rejected",
   "summary": "Brief description of what was found",
-  "testsRun": true,
-  "testsPassed": false,
   "issues": [
     {
       "id": 1,
@@ -108,12 +104,12 @@ You MUST respond with valid JSON in one of these formats:
 2. **Be Specific**: Provide exact file paths and line numbers
 3. **Be Actionable**: Every issue must have a clear suggestion for fixing
 4. **Be Fair**: Only reject for real issues, not style preferences
-5. **Run Tests**: Always attempt to run the test suite
-6. **Check Build**: Always verify the project builds successfully
+5. **No Execution**: Do NOT run the application, tests, or build commands - this is a static code review only
+6. **Language Agnostic**: The project may be in any language (Python, Java, JavaScript, Go, etc.) - review the code accordingly
 
 ## Severity Levels
 
-- **high**: Blocks functionality, security vulnerability, or breaks build
+- **high**: Blocks functionality, security vulnerability, or likely breaks the code
 - **medium**: Degraded functionality, missing edge case, code smell
 - **low**: Style issues, minor improvements, documentation gaps
 
@@ -145,12 +141,12 @@ For each issue:
 4. Do NOT add new features or refactor unrelated code
 
 ### Step 3: Verify Fixes
-- Run tests after all fixes: \`npm test\` or equivalent
-- Verify the build passes: \`npm run build\` or equivalent
+- Re-read the modified code to ensure the fix is correct
 - Check that fixes don't introduce new issues
+- Do NOT run the application, tests, or build commands - different projects use different languages/frameworks (Python, Java, JavaScript, etc.)
 
 ### Step 4: Commit Changes
-Create a single commit with all fixes:
+Use git commands to create a single commit with all fixes:
 \`\`\`
 fix: address QA review feedback
 
@@ -236,10 +232,6 @@ After completing all fixes, respond with:
       "linesChanged": [42, 43, 44, 45]
     }
   ],
-  "testsRun": true,
-  "testsPassed": true,
-  "buildPassed": true,
-  "commitHash": "abc123",
   "notes": "Any relevant notes about the fixes"
 }
 \`\`\`
@@ -262,9 +254,9 @@ If you cannot fix an issue, report it:
 ## Important
 
 - Stay focused on the reported issues only
-- Test after every significant change
-- If a fix breaks something else, revert and try a different approach
-- Commit only when all tests pass`;
+- Re-read the code after making changes to verify correctness
+- If a fix might break something else, revert and try a different approach
+- Use Bash ONLY for git commands (add, commit, push) - do NOT run tests, builds, or the application`;
 
 /**
  * Build the user prompt for the reviewer agent
