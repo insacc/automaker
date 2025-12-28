@@ -26,6 +26,8 @@ export type EventType =
   | 'project:analysis-error'
   | 'suggestions:event'
   | 'spec-regeneration:event'
-  | 'issue-validation:event';
+  | 'issue-validation:event'
+  | 'qa-review:event'
+  | 'feature:updated';
 
 export type EventCallback = (type: EventType, payload: unknown) => void;
