@@ -646,6 +646,9 @@ export class AutoModeService {
         console.log(`[AutoMode] Working directory: ${workDir}`);
 
         try {
+          // Ensure automaker output files are gitignored (keep feature.json and qa-review-state.json)
+          await this.ensureAutomakerGitignore(workDir);
+
           // Commit any uncommitted changes
           const { stdout: status } = await execAsync('git status --porcelain', {
             cwd: workDir,
@@ -1685,6 +1688,46 @@ Format your response as a structured markdown document.`;
       console.log(`[AutoMode] Saved PR info for feature ${featureId}: ${prUrl}`);
     } catch (error) {
       console.error(`[AutoMode] Failed to save PR info for ${featureId}:`, error);
+    }
+  }
+
+  /**
+   * Ensure .gitignore has entries to exclude automaker output files
+   * but keep feature.json and qa-review-state.json
+   */
+  private async ensureAutomakerGitignore(workDir: string): Promise<void> {
+    const gitignorePath = path.join(workDir, '.gitignore');
+    const automakerIgnorePatterns = [
+      '',
+      '# AutoMaker - ignore agent output logs (keep feature.json and qa-review-state.json)',
+      '.automaker/features/*/output.txt',
+      '.automaker/features/*/output-*.txt',
+      '.automaker/features/**/output*.txt',
+    ];
+
+    const markerComment = '# AutoMaker - ignore agent output logs';
+
+    try {
+      let gitignoreContent = '';
+      try {
+        gitignoreContent = (await secureFs.readFile(gitignorePath, 'utf-8')) as string;
+      } catch {
+        // .gitignore doesn't exist, will create it
+      }
+
+      // Check if we've already added our patterns
+      if (gitignoreContent.includes(markerComment)) {
+        return; // Already configured
+      }
+
+      // Append our patterns
+      const newContent =
+        gitignoreContent.trimEnd() + '\n' + automakerIgnorePatterns.join('\n') + '\n';
+      await secureFs.writeFile(gitignorePath, newContent);
+      console.log(`[AutoMode] Added automaker output patterns to .gitignore`);
+    } catch (error) {
+      console.error(`[AutoMode] Failed to update .gitignore:`, error);
+      // Non-fatal, continue anyway
     }
   }
 

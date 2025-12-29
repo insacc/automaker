@@ -439,8 +439,10 @@ export class QAReviewService {
     // Build detailed review body with all issues
     const reviewBody = this.formatDetailedReviewBody(issues, iteration, approved, summary);
 
-    // Determine review action
-    const reviewAction = approved ? '--approve' : '--request-changes';
+    // Note: We use --comment instead of --approve because GitHub doesn't allow
+    // approving your own PR (same token that created the PR can't approve it)
+    // For rejection, we can use --request-changes
+    const reviewAction = approved ? '--comment' : '--request-changes';
 
     try {
       // Use gh pr review which is more reliable than the API
@@ -451,7 +453,7 @@ export class QAReviewService {
       });
 
       console.log(
-        `[QAReview] Posted review for PR #${prNumber} (${approved ? 'approved' : 'changes requested'})`
+        `[QAReview] Posted review for PR #${prNumber} (${approved ? 'passed' : 'changes requested'})`
       );
     } catch (error) {
       console.error('[QAReview] Failed to post review:', error);
@@ -554,6 +556,9 @@ export class QAReviewService {
    */
   private async commitAndPushFixes(worktreePath: string, iteration: number): Promise<void> {
     try {
+      // Ensure automaker output files are gitignored
+      await this.ensureAutomakerGitignore(worktreePath);
+
       const { stdout: status } = await execAsync('git status --porcelain', { cwd: worktreePath });
 
       if (status.trim()) {
@@ -569,6 +574,45 @@ export class QAReviewService {
     } catch (error) {
       console.error('[QAReview] Failed to commit and push fixes:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Ensure .gitignore has entries to exclude automaker output files
+   */
+  private async ensureAutomakerGitignore(workDir: string): Promise<void> {
+    const gitignorePath = path.join(workDir, '.gitignore');
+    const automakerIgnorePatterns = [
+      '',
+      '# AutoMaker - ignore agent output logs (keep feature.json and qa-review-state.json)',
+      '.automaker/features/*/output.txt',
+      '.automaker/features/*/output-*.txt',
+      '.automaker/features/**/output*.txt',
+    ];
+
+    const markerComment = '# AutoMaker - ignore agent output logs';
+
+    try {
+      let gitignoreContent = '';
+      try {
+        gitignoreContent = (await secureFs.readFile(gitignorePath, 'utf-8')) as string;
+      } catch {
+        // .gitignore doesn't exist, will create it
+      }
+
+      // Check if we've already added our patterns
+      if (gitignoreContent.includes(markerComment)) {
+        return; // Already configured
+      }
+
+      // Append our patterns
+      const newContent =
+        gitignoreContent.trimEnd() + '\n' + automakerIgnorePatterns.join('\n') + '\n';
+      await secureFs.writeFile(gitignorePath, newContent);
+      console.log(`[QAReview] Added automaker output patterns to .gitignore`);
+    } catch (error) {
+      console.error(`[QAReview] Failed to update .gitignore:`, error);
+      // Non-fatal, continue anyway
     }
   }
 
