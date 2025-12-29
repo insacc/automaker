@@ -640,25 +640,31 @@ export class AutoModeService {
       let prNumber: number | undefined;
 
       // If feature has a branch, commit changes and create PR
-      if (branchName && worktreePath) {
+      // Use workDir which is either the worktree path or the project path
+      if (branchName) {
+        console.log(`[AutoMode] Feature has branchName "${branchName}", attempting PR creation...`);
+        console.log(`[AutoMode] Working directory: ${workDir}`);
+
         try {
           // Commit any uncommitted changes
           const { stdout: status } = await execAsync('git status --porcelain', {
-            cwd: worktreePath,
+            cwd: workDir,
           });
 
           if (status.trim()) {
-            await execAsync('git add -A', { cwd: worktreePath });
+            await execAsync('git add -A', { cwd: workDir });
             const title = this.extractTitleFromDescription(feature.description);
             const commitMessage = `feat: ${title}\n\nImplemented by Automaker`;
             await execAsync(`git commit -m "${commitMessage.replace(/"/g, '\\"')}"`, {
-              cwd: worktreePath,
+              cwd: workDir,
             });
             console.log(`[AutoMode] Committed changes for feature ${featureId}`);
+          } else {
+            console.log(`[AutoMode] No uncommitted changes to commit for feature ${featureId}`);
           }
 
           // Push the branch
-          await execAsync(`git push -u origin ${branchName}`, { cwd: worktreePath });
+          await execAsync(`git push -u origin ${branchName}`, { cwd: workDir });
           console.log(`[AutoMode] Pushed branch ${branchName} for feature ${featureId}`);
 
           // Create PR using gh CLI
@@ -668,7 +674,7 @@ export class AutoModeService {
 
           const { stdout: prOutput } = await execAsync(
             `gh pr create --title "${prTitle.replace(/"/g, '\\"')}" --body '${escapedBody}' --head ${branchName}`,
-            { cwd: worktreePath }
+            { cwd: workDir }
           );
 
           // Parse PR URL from output
@@ -687,10 +693,12 @@ export class AutoModeService {
           console.error(`[AutoMode] Failed to create PR for feature ${featureId}:`, error);
           // Continue without PR - will go directly to waiting_approval
         }
+      } else {
+        console.log(`[AutoMode] Feature ${featureId} has no branchName, skipping PR creation`);
       }
 
       // If PR was created and QA review service is available, trigger AI review
-      if (prCreated && prNumber && prUrl && worktreePath && this.qaReviewService) {
+      if (prCreated && prNumber && prUrl && this.qaReviewService) {
         console.log(`[AutoMode] Starting QA review for feature ${featureId}`);
 
         // Start QA review (async - runs in background)
@@ -699,7 +707,7 @@ export class AutoModeService {
           .startReview(
             projectPath,
             featureId,
-            worktreePath,
+            workDir, // Use workDir (either worktree or project path)
             prNumber,
             prUrl,
             feature.spec || feature.description,
