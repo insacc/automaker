@@ -155,13 +155,20 @@ export class QAReviewService {
     const { featureId, projectPath, worktreePath, prNumber, abortController } = review;
     const resolvedModel = resolveModelString(config.reviewerModel || model, DEFAULT_MODELS.claude);
 
+    console.log(
+      `[QAReview] Starting review loop for feature ${featureId}, max iterations: ${config.maxIterations}`
+    );
+
     while (review.state.iteration <= config.maxIterations) {
       if (abortController.signal.aborted) {
         throw new Error('Review cancelled');
       }
 
+      console.log(`[QAReview] Iteration ${review.state.iteration}: Getting PR diff...`);
+
       // 1. Get PR diff
       const diff = await this.getPRDiff(worktreePath, prNumber);
+      console.log(`[QAReview] Got PR diff (${diff.length} chars)`);
 
       // 2. Get previous issues (for re-review)
       const previousIssues =
@@ -170,6 +177,7 @@ export class QAReviewService {
           : undefined;
 
       // 3. Run reviewer agent
+      console.log(`[QAReview] Running AI reviewer agent...`);
       this.emitEvent('qa_review_progress', {
         featureId,
         projectPath,
@@ -188,10 +196,14 @@ export class QAReviewService {
         abortController
       );
 
+      console.log(
+        `[QAReview] Reviewer completed. Approved: ${reviewResult.approved}, Issues: ${reviewResult.issues.length}`
+      );
       review.state.reviews.push(reviewResult);
 
-      // 4. Post inline comments to GitHub if configured
+      // 4. Post review comments to GitHub if configured
       if (config.autoPostComments) {
+        console.log(`[QAReview] Posting review to GitHub PR #${prNumber}...`);
         await this.postInlineReviewComments(
           worktreePath,
           prNumber,
@@ -200,10 +212,12 @@ export class QAReviewService {
           reviewResult.approved,
           reviewResult.summary
         );
+        console.log(`[QAReview] Review posted to GitHub`);
       }
 
       // 5. Check if approved
       if (reviewResult.approved) {
+        console.log(`[QAReview] PR approved by AI reviewer, moving to waiting_approval`);
         review.state.status = 'approved';
         review.state.completedAt = new Date().toISOString();
         await this.saveQAReviewState(projectPath, featureId, review.state);
@@ -218,10 +232,12 @@ export class QAReviewService {
           iteration: review.state.iteration,
           message: 'PR approved by AI reviewer',
         });
+        console.log(`[QAReview] Review complete for feature ${featureId}`);
         return;
       }
 
       // 6. Issues found - emit event
+      console.log(`[QAReview] Issues found: ${reviewResult.issues.length}`);
       this.emitEvent('qa_review_issues_found', {
         featureId,
         projectPath,
@@ -231,6 +247,9 @@ export class QAReviewService {
 
       // 7. Check if max iterations reached
       if (review.state.iteration >= config.maxIterations) {
+        console.log(
+          `[QAReview] Max iterations (${config.maxIterations}) reached, moving to waiting_approval`
+        );
         review.state.status = 'max_iterations_reached';
         review.state.completedAt = new Date().toISOString();
         await this.saveQAReviewState(projectPath, featureId, review.state);
@@ -245,10 +264,12 @@ export class QAReviewService {
           maxIterations: config.maxIterations,
           issues: reviewResult.issues,
         });
+        console.log(`[QAReview] Review complete (max iterations) for feature ${featureId}`);
         return;
       }
 
       // 8. Run fixer agent
+      console.log(`[QAReview] Running AI fixer agent...`);
       review.state.status = 'fixing';
       await this.saveQAReviewState(projectPath, featureId, review.state);
 
@@ -269,9 +290,12 @@ export class QAReviewService {
         fixerModel,
         abortController
       );
+      console.log(`[QAReview] Fixer agent completed`);
 
       // 9. Commit and push fixes
+      console.log(`[QAReview] Committing and pushing fixes...`);
       await this.commitAndPushFixes(worktreePath, review.state.iteration);
+      console.log(`[QAReview] Fixes committed and pushed`);
 
       this.emitEvent('qa_fixer_complete', {
         featureId,
@@ -283,7 +307,10 @@ export class QAReviewService {
       review.state.iteration++;
       review.state.status = 'reviewing';
       await this.saveQAReviewState(projectPath, featureId, review.state);
+      console.log(`[QAReview] Moving to iteration ${review.state.iteration}`);
     }
+
+    console.log(`[QAReview] Review loop ended for feature ${featureId}`);
   }
 
   /**
@@ -398,8 +425,8 @@ export class QAReviewService {
   }
 
   /**
-   * Post inline review comments to GitHub PR
-   * Uses GitHub's Pull Request Review API via gh CLI
+   * Post review comments to GitHub PR
+   * Uses gh pr review command for reliability
    */
   private async postInlineReviewComments(
     worktreePath: string,
@@ -409,89 +436,94 @@ export class QAReviewService {
     approved: boolean,
     summary?: string
   ): Promise<void> {
-    // Build review comments array for each issue with file/line info
-    const comments = issues
-      .filter((issue) => issue.filePath && issue.lineStart)
-      .map((issue) => ({
-        path: issue.filePath,
-        line: issue.lineStart,
-        body: this.formatInlineComment(issue),
-      }));
+    // Build detailed review body with all issues
+    const reviewBody = this.formatDetailedReviewBody(issues, iteration, approved, summary);
 
-    // Create review body (summary)
-    const reviewBody = this.formatReviewSummary(issues, iteration, approved, summary);
-
-    // Determine review event type
-    const event = approved ? 'APPROVE' : issues.length > 0 ? 'REQUEST_CHANGES' : 'COMMENT';
-
-    // Use gh api to create PR review with inline comments
-    const reviewData = {
-      body: reviewBody,
-      event: event,
-      comments: comments,
-    };
+    // Determine review action
+    const reviewAction = approved ? '--approve' : '--request-changes';
 
     try {
-      // Write review data to a temp file to avoid shell escaping issues
-      const tempFile = path.join(worktreePath, '.qa-review-temp.json');
-      await secureFs.writeFile(tempFile, JSON.stringify(reviewData));
-
-      await execAsync(
-        `gh api repos/{owner}/{repo}/pulls/${prNumber}/reviews --method POST --input ${tempFile}`,
-        {
-          cwd: worktreePath,
-        }
-      );
-
-      // Clean up temp file
-      try {
-        await secureFs.unlink(tempFile);
-      } catch {
-        // Ignore cleanup errors
-      }
+      // Use gh pr review which is more reliable than the API
+      const escapedBody = reviewBody.replace(/'/g, "'\\''");
+      await execAsync(`gh pr review ${prNumber} ${reviewAction} --body '${escapedBody}'`, {
+        cwd: worktreePath,
+        timeout: 60000, // 60 second timeout
+      });
 
       console.log(
-        `[QAReview] Posted inline review with ${comments.length} comments for PR #${prNumber}`
+        `[QAReview] Posted review for PR #${prNumber} (${approved ? 'approved' : 'changes requested'})`
       );
     } catch (error) {
-      console.error('[QAReview] Failed to post inline comments:', error);
-      // Fallback to regular comment if inline fails
+      console.error('[QAReview] Failed to post review:', error);
+      // Fallback to regular comment if review fails
       await this.postFallbackComment(worktreePath, prNumber, issues, iteration, approved, summary);
     }
   }
 
   /**
-   * Format a single inline comment for an issue
+   * Format detailed review body with all issues listed
    */
-  private formatInlineComment(issue: ReviewIssue): string {
-    let comment = `**${issue.severity.toUpperCase()}** - ${issue.category}\n\n`;
-    comment += `${issue.description}\n\n`;
-    if (issue.suggestion) {
-      comment += `💡 **Suggestion:** ${issue.suggestion}`;
-    }
-    return comment;
-  }
-
-  /**
-   * Format the review summary (main review body)
-   */
-  private formatReviewSummary(
+  private formatDetailedReviewBody(
     issues: ReviewIssue[],
     iteration: number,
     approved: boolean,
     summary?: string
   ): string {
-    let body = `## AI Code Review ${approved ? '✅ Approved' : '🔍 Needs Changes'} (Iteration ${iteration})\n\n`;
-    if (summary) body += `> ${summary}\n\n`;
-    if (!approved && issues.length > 0) {
-      body += `Found ${issues.length} issue(s). See inline comments for details.\n`;
+    let body = `## AI Code Review ${approved ? '✅ Approved' : '🔍 Changes Requested'} (Iteration ${iteration})\n\n`;
+
+    if (summary) {
+      body += `> ${summary}\n\n`;
     }
-    body += '\n---\n*Generated by AutoMaker AI Reviewer*';
+
+    if (!approved && issues.length > 0) {
+      // Group issues by severity
+      const critical = issues.filter((i) => i.severity === 'critical');
+      const major = issues.filter((i) => i.severity === 'major');
+      const minor = issues.filter((i) => i.severity === 'minor');
+      const suggestions = issues.filter((i) => i.severity === 'suggestion');
+
+      if (critical.length > 0) {
+        body += `### 🚨 Critical Issues (${critical.length})\n\n`;
+        critical.forEach((issue) => {
+          body += `- **${issue.filePath}${issue.lineStart ? `:${issue.lineStart}` : ''}** - ${issue.description}\n`;
+          if (issue.suggestion) body += `  - 💡 ${issue.suggestion}\n`;
+        });
+        body += '\n';
+      }
+
+      if (major.length > 0) {
+        body += `### ⚠️ Major Issues (${major.length})\n\n`;
+        major.forEach((issue) => {
+          body += `- **${issue.filePath}${issue.lineStart ? `:${issue.lineStart}` : ''}** - ${issue.description}\n`;
+          if (issue.suggestion) body += `  - 💡 ${issue.suggestion}\n`;
+        });
+        body += '\n';
+      }
+
+      if (minor.length > 0) {
+        body += `### 📝 Minor Issues (${minor.length})\n\n`;
+        minor.forEach((issue) => {
+          body += `- **${issue.filePath}${issue.lineStart ? `:${issue.lineStart}` : ''}** - ${issue.description}\n`;
+          if (issue.suggestion) body += `  - 💡 ${issue.suggestion}\n`;
+        });
+        body += '\n';
+      }
+
+      if (suggestions.length > 0) {
+        body += `### 💡 Suggestions (${suggestions.length})\n\n`;
+        suggestions.forEach((issue) => {
+          body += `- **${issue.filePath}${issue.lineStart ? `:${issue.lineStart}` : ''}** - ${issue.description}\n`;
+        });
+        body += '\n';
+      }
+    }
+
+    body += '---\n*Generated by AutoMaker AI Reviewer*';
     return body;
   }
 
   /**
-   * Fallback: Post a regular PR comment if inline comments fail
+   * Fallback: Post a regular PR comment if review fails
    */
   private async postFallbackComment(
     worktreePath: string,
