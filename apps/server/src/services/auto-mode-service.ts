@@ -667,30 +667,58 @@ export class AutoModeService {
           await execAsync(`git push -u origin ${branchName}`, { cwd: workDir });
           console.log(`[AutoMode] Pushed branch ${branchName} for feature ${featureId}`);
 
-          // Create PR using gh CLI
+          // Try to create PR, or use existing PR if one already exists
           const prTitle = this.extractTitleFromDescription(feature.description);
           const prBody = `## Description\n\n${feature.description}\n\n---\n*Implemented by Automaker*`;
           const escapedBody = prBody.replace(/'/g, "'\\''");
 
-          const { stdout: prOutput } = await execAsync(
-            `gh pr create --title "${prTitle.replace(/"/g, '\\"')}" --body '${escapedBody}' --head ${branchName}`,
-            { cwd: workDir }
-          );
+          try {
+            const { stdout: prOutput } = await execAsync(
+              `gh pr create --title "${prTitle.replace(/"/g, '\\"')}" --body '${escapedBody}' --head ${branchName}`,
+              { cwd: workDir }
+            );
 
-          // Parse PR URL from output
-          prUrl = prOutput.trim();
-          const prMatch = prUrl.match(/\/pull\/(\d+)/);
-          prNumber = prMatch ? parseInt(prMatch[1], 10) : undefined;
+            // Parse PR URL from output
+            prUrl = prOutput.trim();
+            const prMatch = prUrl.match(/\/pull\/(\d+)/);
+            prNumber = prMatch ? parseInt(prMatch[1], 10) : undefined;
 
-          if (prUrl && prNumber) {
-            prCreated = true;
-            console.log(`[AutoMode] Created PR #${prNumber}: ${prUrl}`);
+            if (prUrl && prNumber) {
+              prCreated = true;
+              console.log(`[AutoMode] Created PR #${prNumber}: ${prUrl}`);
+            }
+          } catch (prCreateError: unknown) {
+            // Check if PR already exists
+            const errorMessage =
+              prCreateError instanceof Error ? prCreateError.message : String(prCreateError);
+            if (errorMessage.includes('already exists')) {
+              console.log(
+                `[AutoMode] PR already exists for branch ${branchName}, using existing PR...`
+              );
+              // Get existing PR info
+              const { stdout: prInfo } = await execAsync(
+                `gh pr view ${branchName} --json number,url`,
+                { cwd: workDir }
+              );
+              const prData = JSON.parse(prInfo);
+              prUrl = prData.url;
+              prNumber = prData.number;
+              if (prUrl && prNumber) {
+                prCreated = true;
+                console.log(`[AutoMode] Using existing PR #${prNumber}: ${prUrl}`);
+              }
+            } else {
+              // Different error, log and continue
+              console.error(`[AutoMode] Failed to create PR:`, prCreateError);
+            }
+          }
 
+          if (prCreated && prUrl && prNumber) {
             // Save PR info to feature
             await this.updateFeaturePRInfo(projectPath, featureId, prUrl, prNumber);
           }
         } catch (error) {
-          console.error(`[AutoMode] Failed to create PR for feature ${featureId}:`, error);
+          console.error(`[AutoMode] Failed to create/get PR for feature ${featureId}:`, error);
           // Continue without PR - will go directly to waiting_approval
         }
       } else {
