@@ -32,6 +32,7 @@ import {
 } from '../lib/sdk-options.js';
 import { FeatureLoader } from './feature-loader.js';
 import type { SettingsService } from './settings-service.js';
+import type { QAReviewService } from './qa-review-service.js';
 import { getAutoLoadClaudeMdSetting, filterClaudeMdFromContext } from '../lib/settings-helpers.js';
 
 const execAsync = promisify(exec);
@@ -348,10 +349,16 @@ export class AutoModeService {
   private config: AutoModeConfig | null = null;
   private pendingApprovals = new Map<string, PendingApproval>();
   private settingsService: SettingsService | null = null;
+  private qaReviewService: QAReviewService | null = null;
 
-  constructor(events: EventEmitter, settingsService?: SettingsService) {
+  constructor(
+    events: EventEmitter,
+    settingsService?: SettingsService,
+    qaReviewService?: QAReviewService
+  ) {
     this.events = events;
     this.settingsService = settingsService ?? null;
+    this.qaReviewService = qaReviewService ?? null;
   }
 
   /**
@@ -627,20 +634,113 @@ export class AutoModeService {
         }
       );
 
-      // Determine final status based on testing mode:
-      // - skipTests=false (automated testing): go directly to 'verified' (no manual verify needed)
-      // - skipTests=true (manual verification): go to 'waiting_approval' for manual review
-      const finalStatus = feature.skipTests ? 'waiting_approval' : 'verified';
-      await this.updateFeatureStatus(projectPath, featureId, finalStatus);
+      // After implementation completes, try to create PR and trigger AI review
+      let prCreated = false;
+      let prUrl: string | undefined;
+      let prNumber: number | undefined;
 
-      this.emitAutoModeEvent('auto_mode_feature_complete', {
-        featureId,
-        passes: true,
-        message: `Feature completed in ${Math.round(
-          (Date.now() - tempRunningFeature.startTime) / 1000
-        )}s${finalStatus === 'verified' ? ' - auto-verified' : ''}`,
-        projectPath,
-      });
+      // If feature has a branch, commit changes and create PR
+      if (branchName && worktreePath) {
+        try {
+          // Commit any uncommitted changes
+          const { stdout: status } = await execAsync('git status --porcelain', {
+            cwd: worktreePath,
+          });
+
+          if (status.trim()) {
+            await execAsync('git add -A', { cwd: worktreePath });
+            const title = this.extractTitleFromDescription(feature.description);
+            const commitMessage = `feat: ${title}\n\nImplemented by Automaker`;
+            await execAsync(`git commit -m "${commitMessage.replace(/"/g, '\\"')}"`, {
+              cwd: worktreePath,
+            });
+            console.log(`[AutoMode] Committed changes for feature ${featureId}`);
+          }
+
+          // Push the branch
+          await execAsync(`git push -u origin ${branchName}`, { cwd: worktreePath });
+          console.log(`[AutoMode] Pushed branch ${branchName} for feature ${featureId}`);
+
+          // Create PR using gh CLI
+          const prTitle = this.extractTitleFromDescription(feature.description);
+          const prBody = `## Description\n\n${feature.description}\n\n---\n*Implemented by Automaker*`;
+          const escapedBody = prBody.replace(/'/g, "'\\''");
+
+          const { stdout: prOutput } = await execAsync(
+            `gh pr create --title "${prTitle.replace(/"/g, '\\"')}" --body '${escapedBody}' --head ${branchName}`,
+            { cwd: worktreePath }
+          );
+
+          // Parse PR URL from output
+          prUrl = prOutput.trim();
+          const prMatch = prUrl.match(/\/pull\/(\d+)/);
+          prNumber = prMatch ? parseInt(prMatch[1], 10) : undefined;
+
+          if (prUrl && prNumber) {
+            prCreated = true;
+            console.log(`[AutoMode] Created PR #${prNumber}: ${prUrl}`);
+
+            // Save PR info to feature
+            await this.updateFeaturePRInfo(projectPath, featureId, prUrl, prNumber);
+          }
+        } catch (error) {
+          console.error(`[AutoMode] Failed to create PR for feature ${featureId}:`, error);
+          // Continue without PR - will go directly to waiting_approval
+        }
+      }
+
+      // If PR was created and QA review service is available, trigger AI review
+      if (prCreated && prNumber && prUrl && worktreePath && this.qaReviewService) {
+        console.log(`[AutoMode] Starting QA review for feature ${featureId}`);
+
+        // Start QA review (async - runs in background)
+        // The QA review service will update status to ai_review, then waiting_approval when done
+        this.qaReviewService
+          .startReview(
+            projectPath,
+            featureId,
+            worktreePath,
+            prNumber,
+            prUrl,
+            feature.spec || feature.description,
+            feature.description,
+            { maxIterations: 3, autoPostComments: true },
+            feature.model
+          )
+          .catch((error) => {
+            console.error(`[AutoMode] QA review failed for feature ${featureId}:`, error);
+            // If QA review fails, fall back to waiting_approval
+            this.updateFeatureStatus(projectPath, featureId, 'waiting_approval');
+          });
+
+        this.emitAutoModeEvent('auto_mode_feature_complete', {
+          featureId,
+          passes: true,
+          message: `Feature completed in ${Math.round(
+            (Date.now() - tempRunningFeature.startTime) / 1000
+          )}s - PR created, starting AI review`,
+          projectPath,
+          prUrl,
+          prNumber,
+        });
+      } else {
+        // Determine final status based on testing mode:
+        // - skipTests=false (automated testing): go directly to 'verified' (no manual verify needed)
+        // - skipTests=true (manual verification): go to 'waiting_approval' for manual review
+        const finalStatus = feature.skipTests ? 'waiting_approval' : 'verified';
+        await this.updateFeatureStatus(projectPath, featureId, finalStatus);
+
+        this.emitAutoModeEvent('auto_mode_feature_complete', {
+          featureId,
+          passes: true,
+          message: `Feature completed in ${Math.round(
+            (Date.now() - tempRunningFeature.startTime) / 1000
+          )}s${finalStatus === 'verified' ? ' - auto-verified' : ''}${prUrl ? ` - PR: ${prUrl}` : ''}`,
+          projectPath,
+          prUrl,
+          prNumber,
+        });
+      }
     } catch (error) {
       const errorInfo = classifyError(error);
 
@@ -1525,6 +1625,30 @@ Format your response as a structured markdown document.`;
       await secureFs.writeFile(featurePath, JSON.stringify(feature, null, 2));
     } catch (error) {
       console.error(`[AutoMode] Failed to update planSpec for ${featureId}:`, error);
+    }
+  }
+
+  /**
+   * Update PR info on a feature
+   */
+  private async updateFeaturePRInfo(
+    projectPath: string,
+    featureId: string,
+    prUrl: string,
+    prNumber: number
+  ): Promise<void> {
+    const featurePath = path.join(projectPath, '.automaker', 'features', featureId, 'feature.json');
+
+    try {
+      const data = (await secureFs.readFile(featurePath, 'utf-8')) as string;
+      const feature = JSON.parse(data);
+      feature.prUrl = prUrl;
+      feature.prNumber = prNumber;
+      feature.updatedAt = new Date().toISOString();
+      await secureFs.writeFile(featurePath, JSON.stringify(feature, null, 2));
+      console.log(`[AutoMode] Saved PR info for feature ${featureId}: ${prUrl}`);
+    } catch (error) {
+      console.error(`[AutoMode] Failed to save PR info for ${featureId}:`, error);
     }
   }
 

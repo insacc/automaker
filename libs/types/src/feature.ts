@@ -54,6 +54,9 @@ export interface Feature {
   error?: string;
   summary?: string;
   startedAt?: string;
+  // PR info - populated after PR creation
+  prUrl?: string;
+  prNumber?: number;
   [key: string]: unknown; // Keep catch-all for extensibility
 }
 

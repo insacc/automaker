@@ -119,9 +119,10 @@ const events: EventEmitter = createEventEmitter();
 const settingsService = new SettingsService(DATA_DIR);
 const agentService = new AgentService(DATA_DIR, events, settingsService);
 const featureLoader = new FeatureLoader();
-const autoModeService = new AutoModeService(events, settingsService);
 const claudeUsageService = new ClaudeUsageService();
+// qaReviewService is created before autoModeService so it can be injected
 const qaReviewService = new QAReviewService(events);
+const autoModeService = new AutoModeService(events, settingsService, qaReviewService);
 
 // Initialize services
 (async () => {

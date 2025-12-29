@@ -307,7 +307,7 @@ ${i + 1}. **${issue.severity.toUpperCase()}** - ${issue.category}
 
 1. Read the feature specification and understand the acceptance criteria
 2. Review the code changes in the diff
-3. Run tests, linting, and build to verify the implementation
+3. Analyze the code statically (do NOT run tests, builds, or the application)
 4. Check each acceptance criterion is met
 5. Output your review in the JSON format specified in your instructions`;
 
@@ -366,7 +366,7 @@ ${issue.codeSnippet}
 1. Fix each issue above, starting with high severity issues
 2. Navigate to the exact file and line for each issue
 3. Implement minimal fixes that resolve the issues
-4. Run tests to verify your changes work correctly
+4. Re-read the modified code to verify correctness (do NOT run tests or builds)
 5. Create a single commit with all fixes
 6. Provide your response in the JSON format specified in your instructions`;
 }
