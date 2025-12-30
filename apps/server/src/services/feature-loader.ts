@@ -4,6 +4,8 @@
  */
 
 import path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import type { Feature } from '@automaker/types';
 import { createLogger } from '@automaker/utils';
 import * as secureFs from '../lib/secure-fs.js';
@@ -14,6 +16,7 @@ import {
   ensureAutomakerDir,
 } from '@automaker/platform';
 
+const execAsync = promisify(exec);
 const logger = createLogger('FeatureLoader');
 
 // Re-export Feature type for convenience
@@ -283,8 +286,31 @@ export class FeatureLoader {
     // Write feature.json
     await secureFs.writeFile(featureJsonPath, JSON.stringify(feature, null, 2), 'utf-8');
 
+    // Commit the feature.json file immediately so it doesn't block branch switching
+    await this.commitFeatureFile(projectPath, featureId);
+
     logger.info(`Created feature ${featureId}`);
     return feature;
+  }
+
+  /**
+   * Commit feature.json file to git
+   */
+  private async commitFeatureFile(projectPath: string, featureId: string): Promise<void> {
+    try {
+      const featureJsonPath = `.automaker/features/${featureId}/feature.json`;
+
+      // Add the feature.json file
+      await execAsync(`git add "${featureJsonPath}"`, { cwd: projectPath });
+
+      // Commit the file
+      await execAsync(`git commit -m "chore: add feature ${featureId}"`, { cwd: projectPath });
+
+      logger.info(`Committed feature.json for ${featureId}`);
+    } catch (error) {
+      // Non-fatal - might not be a git repo or might fail for other reasons
+      logger.warn(`Failed to commit feature.json for ${featureId}:`, error);
+    }
   }
 
   /**

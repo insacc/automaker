@@ -225,6 +225,9 @@ export class QAReviewService {
         // Update feature status to waiting_approval
         await this.updateFeatureStatus(projectPath, featureId, 'waiting_approval');
 
+        // Commit and push the updated feature.json and qa-review-state.json to the PR
+        await this.commitAndPushReviewState(worktreePath, featureId, 'approved');
+
         this.emitEvent('qa_review_approved', {
           featureId,
           projectPath,
@@ -256,6 +259,9 @@ export class QAReviewService {
 
         // Still move to waiting_approval so human can review
         await this.updateFeatureStatus(projectPath, featureId, 'waiting_approval');
+
+        // Commit and push the updated feature.json and qa-review-state.json to the PR
+        await this.commitAndPushReviewState(worktreePath, featureId, 'max_iterations');
 
         this.emitEvent('qa_review_max_iterations', {
           featureId,
@@ -574,6 +580,48 @@ export class QAReviewService {
     } catch (error) {
       console.error('[QAReview] Failed to commit and push fixes:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Commit and push review state (feature.json and qa-review-state.json) after review completes
+   */
+  private async commitAndPushReviewState(
+    worktreePath: string,
+    featureId: string,
+    status: 'approved' | 'max_iterations'
+  ): Promise<void> {
+    try {
+      // Ensure automaker output files are gitignored
+      await this.ensureAutomakerGitignore(worktreePath);
+
+      // Add only the feature.json and qa-review-state.json files
+      await execAsync(
+        'git add .automaker/features/*/feature.json .automaker/features/*/qa-review-state.json',
+        {
+          cwd: worktreePath,
+        }
+      );
+
+      const { stdout: stagedStatus } = await execAsync('git diff --cached --name-only', {
+        cwd: worktreePath,
+      });
+
+      if (stagedStatus.trim()) {
+        const message =
+          status === 'approved'
+            ? 'chore: update feature status after QA review approval'
+            : 'chore: update feature status after QA review (max iterations)';
+
+        await execAsync(`git commit -m "${message}"`, { cwd: worktreePath });
+        await execAsync('git push', { cwd: worktreePath });
+        console.log(`[QAReview] Committed and pushed review state for feature ${featureId}`);
+      } else {
+        console.log(`[QAReview] No review state changes to commit for feature ${featureId}`);
+      }
+    } catch (error) {
+      console.error('[QAReview] Failed to commit and push review state:', error);
+      // Non-fatal - don't throw, just log
     }
   }
 
